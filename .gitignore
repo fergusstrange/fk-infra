@@ -1,0 +1,16 @@
+#Generic
+.idea/
+
+#Build Files
+dist/
+
+#Files created by binary
+.fk-infra/
+.terraform/
+network.tf
+databases.tf
+elasticsearch.tf
+keys/
+fk-infra
+fk-infra.yml
+*.k8s.local.yml
