@@ -194,15 +194,15 @@ func ApplyKubernetesClusters(config *model.Config, outputs terraform.Outputs, ap
 	if baseVPCExists(outputs) {
 		configBucket := config.Spec.ConfigBucket
 
-		masterPolicy, nodePolicy := elasticSearchIamPolicies(outputs)
+		elasticSearchMasterPolicy, elasticSearchNodePolicy := masterAndNodeIamPolicies(outputs)
 
 		for _, kubernetesCluster := range config.Spec.Kubernetes {
 			clusterName := kubernetesCluster.Name
 
 			clusterTemplate := parseClusterTemplate(
 				clusterName,
-				masterPolicy,
-				nodePolicy,
+				elasticSearchMasterPolicy,
+				elasticSearchNodePolicy,
 				config,
 				outputs)
 
@@ -225,18 +225,33 @@ func ApplyKubernetesClusters(config *model.Config, outputs terraform.Outputs, ap
 	}
 }
 
-func applyLogging(kubernetesCluster model.Kubernetes, outputs terraform.Outputs, config *model.Config) {
-	if kubernetesCluster.LoggingElasticSearchName != "" {
-		for _, elasticSearchCluster := range outputs.ElasticSearchConfig() {
-			if kubernetesCluster.LoggingElasticSearchName == elasticSearchCluster.Name {
-				kubernetes.ApplyFluentBitLogging(elasticSearchCluster.Endpoint, config.Spec.Region)
-				break
-			}
-		}
-	}
+func masterAndNodeIamPolicies(outputs terraform.Outputs) (masterPolicies string, nodePolicies string) {
+	elasticSearchMasterPolicies, elasticSearchNodePolicies := elasticSearchIamPolicies(outputs)
+	allNodePolicies := flattenIamPolicies(elasticSearchNodePolicies, route53NodePolicies())
+	return IamPolicyJsonString(elasticSearchMasterPolicies), IamPolicyJsonString(allNodePolicies)
 }
 
-func elasticSearchIamPolicies(outputs terraform.Outputs) (masterPolicyString string, nodePolicyString string) {
+func flattenIamPolicies(policiesToFlatten ...[]*IamPolicy) []*IamPolicy {
+	iamPolicies := make([]*IamPolicy, 0)
+	for _, policies := range policiesToFlatten {
+		for _, policy := range policies {
+			iamPolicies = append(iamPolicies, policy)
+		}
+	}
+	return iamPolicies
+}
+
+func route53NodePolicies() []*IamPolicy {
+	return []*IamPolicy{NewAllowIamPolicy().
+		Actions("route53:ListHostedZones",
+			"route53:ListResourceRecordSets",
+			"route53:ChangeResourceRecordSets",
+			"route53:ListHostedZonesByName",
+			"route53:GetChange").
+		Resources("*")}
+}
+
+func elasticSearchIamPolicies(outputs terraform.Outputs) (masterPolicies []*IamPolicy, nodePolicies []*IamPolicy) {
 	var masterIamPolicies []*IamPolicy
 	var nodeIamPolicies []*IamPolicy
 	for _, elasticSearchCluster := range outputs.ElasticSearchConfig() {
@@ -246,7 +261,18 @@ func elasticSearchIamPolicies(outputs terraform.Outputs) (masterPolicyString str
 		masterIamPolicies = append(masterIamPolicies, iamPolicy)
 		nodeIamPolicies = append(nodeIamPolicies, iamPolicy)
 	}
-	return IamPolicyJsonString(masterIamPolicies), IamPolicyJsonString(nodeIamPolicies)
+	return masterIamPolicies, nodeIamPolicies
+}
+
+func applyLogging(kubernetesCluster model.Kubernetes, outputs terraform.Outputs, config *model.Config) {
+	if kubernetesCluster.LoggingElasticSearchName != "" {
+		for _, elasticSearchCluster := range outputs.ElasticSearchConfig() {
+			if kubernetesCluster.LoggingElasticSearchName == elasticSearchCluster.Name {
+				kubernetes.ApplyFluentBitLogging(elasticSearchCluster.Endpoint, config.Spec.Region)
+				break
+			}
+		}
+	}
 }
 
 func parseClusterTemplate(clusterName, masterPolicy, nodePolicy string, config *model.Config, outputs terraform.Outputs) []byte {
